@@ -3,6 +3,13 @@ name = "bytes-utils"
 version = "0.1.0"
 authors = ["Michal 'vorner' Vaner <vorner@vorner.cz>"]
 edition = "2018"
+description = "Additional utilities for working with the bytes crate"
+documentation = "https://docs.rs/bytes-utils"
+repository = "https://github.com/vorner/bytes-utils"
+readme = "README.md"
+keywords = ["bytes", "zero-copy", "buffers"]
+categories = ["data-structures"]
+license = "Apache-2.0/MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
