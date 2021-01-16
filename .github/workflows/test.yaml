@@ -101,3 +101,27 @@ jobs:
 
       - name: Run clippy linter
         run: cargo clippy --all --tests -- -D clippy::all -D warnings
+
+  miri:
+    name: Miri checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          default: true
+          components: "miri"
+
+      - name: Restore cache
+        uses: Swatinem/rust-cache@v1
+
+      - name: Run miri
+        env:
+          PROPTEST_CASES: "10"
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+        run: cargo miri test --all-features
