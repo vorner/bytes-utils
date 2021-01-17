@@ -1,5 +1,4 @@
 #![doc(test(attr(deny(warnings))))]
-#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 //! # Extra utilities for the [bytes] crate.
@@ -17,5 +16,7 @@
 //! * [SegmentedBuf] for concatenating multiple buffers into a large one without copying the bytes.
 
 mod segmented;
+pub mod string;
 
 pub use segmented::SegmentedBuf;
+pub use string::{Str, StrMut};
