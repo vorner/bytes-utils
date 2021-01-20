@@ -228,12 +228,7 @@ fn empty_sep(s: &str, limit: usize) -> Option<(usize, usize)> {
 }
 
 fn rempty_sep(s: &str, limit: usize) -> Option<(usize, usize)> {
-    let char_start = s
-        .char_indices()
-        .rev()
-        .map(|(i, _)| i)
-        .take(limit)
-        .next()?;
+    let char_start = s.char_indices().rev().map(|(i, _)| i).take(limit).next()?;
     Some((char_start, char_start))
 }
 
@@ -368,8 +363,10 @@ impl<S: Storage> StrInner<S> {
     /// This acts like [split_whitespace][str::split_whitespace], but yields owned instances. It
     /// doesn't clone the content, it just increments some reference counts.
     pub fn split_whitespace_bytes(self) -> impl Iterator<Item = Self> {
-        BytesIter::new(self, Direction::Forward, |s| sep_find(s, char::is_whitespace))
-            .filter(|s| !s.is_empty())
+        BytesIter::new(self, Direction::Forward, |s| {
+            sep_find(s, char::is_whitespace)
+        })
+        .filter(|s| !s.is_empty())
     }
 
     /// Splits into whitespace separated "words".
@@ -377,10 +374,10 @@ impl<S: Storage> StrInner<S> {
     /// This acts like [split_ascii_whitespace][str::split_ascii_whitespace], but yields owned
     /// instances. This doesn't clone the content, it just increments some reference counts.
     pub fn split_ascii_whitespace_bytes(self) -> impl Iterator<Item = Self> {
-        BytesIter::new(self, Direction::Forward, |s| sep_find(s, |c| {
-                c.is_ascii() && (c as u8).is_ascii_whitespace()
-            }))
-            .filter(|s| !s.is_empty())
+        BytesIter::new(self, Direction::Forward, |s| {
+            sep_find(s, |c| c.is_ascii() && (c as u8).is_ascii_whitespace())
+        })
+        .filter(|s| !s.is_empty())
     }
 
     /// Splits into lines.
@@ -413,9 +410,7 @@ impl<S: Storage> StrInner<S> {
             let bulk = BytesIter::new(self, Direction::Forward, |s| empty_sep(s, usize::MAX));
             Either::Left(iter::once(Self::default()).chain(bulk))
         } else {
-            let sep_find = move |s: &str| {
-                s.find(sep).map(|pos| (pos, pos + sep.len()))
-            };
+            let sep_find = move |s: &str| s.find(sep).map(|pos| (pos, pos + sep.len()));
             Either::Right(BytesIter::new(self, Direction::Forward, sep_find))
         }
     }
@@ -463,9 +458,7 @@ impl<S: Storage> StrInner<S> {
             let bulk = BytesIter::new(self, Direction::Backward, |s| rempty_sep(s, usize::MAX));
             Either::Left(iter::once(Self::default()).chain(bulk))
         } else {
-            let sep_find = move |s: &str| {
-                s.rfind(sep).map(|pos| (pos + sep.len(), pos))
-            };
+            let sep_find = move |s: &str| s.rfind(sep).map(|pos| (pos + sep.len(), pos));
             Either::Right(BytesIter::new(self, Direction::Backward, sep_find))
         }
     }
@@ -671,7 +664,6 @@ macro_rules! e {
                 iter::once(s).collect()
             }
         }
-
     };
 }
 
@@ -695,7 +687,7 @@ macro_rules! t {
                 s.0
             }
         }
-    }
+    };
 }
 
 t!(Bytes);
