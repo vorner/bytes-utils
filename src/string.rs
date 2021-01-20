@@ -1,3 +1,73 @@
+//! [String]-like wrappers around [Bytes] and [BytesMut].
+//!
+//! The [Bytes] and [BytesMut] provide a buffer of bytes with ability to create owned slices into
+//! the same shared memory allocation. This allows cheap manipulation of data.
+//!
+//! Strings are mostly just byte buffers with extra APIs to manipulate them. The standard [String]
+//! type is built as a wrapper around [Vec]. We build similar wrappers around the [Bytes] and
+//! [BytesMut], gaining the ability to create owned shared slices for textual data as well.
+//!
+//! Users are expected to use the [Str] and [StrMut] types. Note that these are type aliases around
+//! the [StrInner] type. The latter is means to implement both in one go and contains all the
+//! documentation, but is not meant to be used directly.
+//!
+//! # Splitting
+//!
+//! The [prim@str] type from standard library (which the types here dereference to) allows for
+//! slicing and splitting in many convenient ways. They, however, return borrowed string slices
+//! (`&str`), which might pose some problems.
+//!
+//! The [Str], and to certain extent, the [StrMut] type additionally allow cheap splitting and
+//! slicing that produce owned [Str] and [StrMut] respectively. They are slightly more expensive
+//! than the slicing than the ones returning `&str`, but only by incrementing internal reference
+//! counts. They do not clone the actual string data, like `.to_owned()` on the standard library
+//! methods would. These methods are available in addition to the standard ones.
+//!
+//! There are three ways how this can be done:
+//!
+//! * By dedicated methods, like [lines_bytes][StrInner::lines_bytes] (in general, the name of the
+//!   standard method suffixed with `_bytes`).
+//! * By using the [BytesIter] iterator manually.
+//! * By using the standard-library methods, producing `&str` and translating it back to [Str] with
+//!   [slice][StrInner::slice] or [StrInner::slice_ref].
+//!
+//! # Examples
+//!
+//! ```rust
+//! # use std::convert::TryFrom;
+//! # use bytes::Bytes;
+//! # use bytes_utils::{Str, StrMut};
+//! let mut builder = StrMut::new();
+//! builder += "Hello";
+//! builder.push(' ');
+//! builder.push_str("World");
+//! assert_eq!("Hello World", builder);
+//!
+//! let s1 = builder.split_built().freeze();
+//! // This is a cheap copy, in the form of incrementing a reference count.
+//! let s2 = s1.clone();
+//! assert_eq!("Hello World", s1);
+//! assert_eq!("Hello World", s2);
+//! // Slicing is cheap as well, even though the returned things are Str and therefore owned too.
+//! assert_eq!("ello", s1.slice(1..5));
+//! // We have taken the data out of the builder, but the rest of its capacity can be used for
+//! // further things.
+//! assert_eq!("", builder);
+//!
+//! // Creating from strings and similar works
+//! let a = Str::from("Hello");
+//! assert_eq!("Hello", a);
+//!
+//! let e = Str::new();
+//! assert_eq!("", e);
+//!
+//! // And from Bytes too.
+//! let b = Str::try_from(Bytes::from_static(b"World")).expect("Must be utf8");
+//! assert_eq!("World", b);
+//! // Invalid utf8 is refused.
+//! Str::try_from(Bytes::from_static(&[0, 0, 255])).unwrap_err();
+//! ```
+
 use std::borrow::{Borrow, BorrowMut, Cow};
 use std::cmp::Ordering;
 use std::convert::{Infallible, TryFrom};
@@ -11,6 +81,7 @@ use std::str::{self, FromStr};
 use bytes::{Bytes, BytesMut};
 use either::Either;
 
+/// Error when creating [Str] or [StrMut] from invalid UTF8 data.
 #[derive(Copy, Clone, Debug)]
 pub struct Utf8Error<S> {
     e: str::Utf8Error,
@@ -18,10 +89,13 @@ pub struct Utf8Error<S> {
 }
 
 impl<S> Utf8Error<S> {
+    /// Returns the byte buffer back to the caller.
     pub fn into_inner(self) -> S {
         self.inner
     }
-    pub fn from_utf8_error(&self) -> str::Utf8Error {
+
+    /// The inner description of why the data is invalid UTF8.
+    pub fn utf8_error(&self) -> str::Utf8Error {
         self.e
     }
 }
@@ -34,12 +108,22 @@ impl<S> Display for Utf8Error<S> {
 
 impl<S: Debug> Error for Utf8Error<S> {}
 
+/// Direction of iteration.
+///
+/// See [BytesIter].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Direction {
+    /// Move forward (in the normal direction) in the string.
     Forward,
+
+    /// Move backwards in the string.
     Backward,
 }
 
+/// Manual splitting iterator.
+///
+/// The methods on [Str] and [StrMut] that iterate use this internally. But it can also be used
+/// manually to generate other iterators that split the original into parts.
 #[derive(Clone, Debug)]
 pub struct BytesIter<S, F> {
     bytes: Option<S>,
@@ -52,6 +136,20 @@ where
     S: Storage,
     F: FnMut(&str) -> Option<(usize, usize)>,
 {
+    /// A constructor of the iterator.
+    ///
+    /// The `direction` specifies in what order chunks should be yielded.
+    ///
+    /// The `ext` closure is always called with the rest of not yet split string. It shall return
+    /// the byte indices of the chunk and separator border. In case of forward iteration, it is the
+    /// end of them and the separator needs to end further to the string (or at the same position).
+    /// In the backwards direction, it is in reverse ‒ they specify their starts and the separator
+    /// is before the chunk.
+    ///
+    /// # Panics
+    ///
+    /// If the indices don't point at a character boundary, the iteration will panic. It'll also
+    /// panic if the returned indices are reversed or if they are out of bounds.
     pub fn new(s: StrInner<S>, direction: Direction, ext: F) -> Self {
         Self {
             bytes: Some(s.0),
@@ -76,8 +174,8 @@ where
             let whole_str = unsafe { str::from_utf8_unchecked(storage.as_ref()) };
             // Sanity-check we are not slicing in the middle of utf8 code point. This would
             // panic if we do. It would also panic if we are out of range, which is also good.
-            let _start = &whole_str[..left];
-            let _end = &whole_str[right..];
+            assert!(whole_str.is_char_boundary(left));
+            assert!(whole_str.is_char_boundary(right));
 
             // Now that we are sure this is legal, we are going to slice the byte data for real.
             let (with_sep, end) = storage.split_at(right);
@@ -107,6 +205,7 @@ where
     }
 }
 
+/// Find a separator position, for use with the [BytesIter].
 fn sep_find<F: Fn(char) -> bool>(s: &str, is_sep: F) -> Option<(usize, usize)> {
     let sep_start = s.find(&is_sep)?;
     let sep_end = s[sep_start..]
@@ -116,18 +215,19 @@ fn sep_find<F: Fn(char) -> bool>(s: &str, is_sep: F) -> Option<(usize, usize)> {
     Some((sep_start, sep_end))
 }
 
-fn empty_seps(s: &str, limit: usize) -> Option<(usize, usize)> {
+/// Separator for an empty pattern.
+fn empty_sep(s: &str, limit: usize) -> Option<(usize, usize)> {
     let char_end = s
         .char_indices()
         .skip(1)
         .map(|(i, _)| i)
-        .chain(iter::once(s.len()).take((s.len() > 0) as usize))
+        .chain(iter::once(s.len()).take((!s.is_empty()) as usize))
         .take(limit)
         .next()?;
     Some((char_end, char_end))
 }
 
-fn rempty_seps(s: &str, limit: usize) -> Option<(usize, usize)> {
+fn rempty_sep(s: &str, limit: usize) -> Option<(usize, usize)> {
     let char_start = s
         .char_indices()
         .rev()
@@ -137,9 +237,28 @@ fn rempty_seps(s: &str, limit: usize) -> Option<(usize, usize)> {
     Some((char_start, char_start))
 }
 
+/// The backing storage for [StrInner]
+///
+/// This is currently a technical detail of the crate, users are not expected to implement this
+/// trait. Use [Str] or [StrMut] type aliases.
+///
+/// # Safety
+///
+/// The storage must act "sane". But what exactly it means is not yet analyzed and may change in
+/// future versions. Don't implement the trait (at least not yet).
 pub unsafe trait Storage: AsRef<[u8]> + Default + Sized {
+    /// A type that can be used to build the storage incrementally.
+    ///
+    /// For mutable storages, it may be itself. For immutable one, there needs to be a mutable
+    /// counterpart that can be converted to immutable later on.
     type Creator: Default + StorageMut;
+
+    /// Converts the creator (mutable storage) to self.
+    ///
+    /// In case of mutable storages, this should be identity.
     fn from_creator(creator: Self::Creator) -> Self;
+
+    /// Splits the storage at the given byte index and creates two non-overlapping instances.
     fn split_at(self, at: usize) -> (Self, Self);
 }
 
@@ -165,53 +284,98 @@ unsafe impl Storage for BytesMut {
     }
 }
 
+/// Trait for extra functionality of a mutable storage.
+///
+/// This is in addition to what an immutable storage must satisfy.
+///
+/// # Safety
+///
+/// The storage must act "sane". But what exactly it means is not yet analyzed and may change in
+/// future versions. Don't implement the trait (at least not yet).
 pub unsafe trait StorageMut: Storage + AsMut<[u8]> {
-    type Immutable: Storage;
-    fn into_immutable(self) -> Self::Immutable;
+    /// An immutable counter-part storage.
+    type Immutable: Storage<Creator = Self>;
+
+    /// Adds some more bytes to the end of the storage.
     fn push_slice(&mut self, s: &[u8]);
 }
 
 unsafe impl StorageMut for BytesMut {
     type Immutable = Bytes;
-    fn into_immutable(self) -> Self::Immutable {
-        self.freeze()
-    }
     fn push_slice(&mut self, s: &[u8]) {
         self.extend_from_slice(s)
     }
 }
 
+/// Implementation of the [Str] and [StrMut] types.
+///
+/// For technical reasons, both are implemented in one go as this type. For the same reason, most
+/// of the documentation can be found here. Users are expected to use the [Str] and [StrMut]
+/// instead.
 #[derive(Copy, Clone, Default)]
 pub struct StrInner<S>(S);
 
 impl<S: Storage> StrInner<S> {
+    /// Creates an empty instance.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Extracts the inner byte storage.
     pub fn into_inner(self) -> S {
         self.0
     }
+
+    /// Access to the inner storage.
     pub fn inner(&self) -> &S {
         &self.0
     }
+
+    /// Creates an instance from an existing byte storage.
+    ///
+    /// It may fail if the content is not valid UTF8.
+    ///
+    /// A [try_from][TryFrom::try_from] may be used instead.
     pub fn from_inner(s: S) -> Result<Self, Utf8Error<S>> {
         match str::from_utf8(s.as_ref()) {
             Ok(_) => Ok(Self(s)),
             Err(e) => Err(Utf8Error { e, inner: s }),
         }
     }
+
+    /// Same as [from_inner][StrInner::from_inner], but without the checks.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure content is valid UTF8.
     pub unsafe fn from_inner_unchecked(s: S) -> Self {
         Self(s)
     }
 
+    /// Splits the string into two at the given index.
+    ///
+    /// # Panics
+    ///
+    /// If the index is not at char boundary.
     pub fn split_at_bytes(self, at: usize) -> (Self, Self) {
+        assert!(self.deref().is_char_boundary(at));
         let (l, r) = self.0.split_at(at);
         (Self(l), Self(r))
     }
 
-    // TODO: Make type public?
+    /// Splits into whitespace separated "words".
+    ///
+    /// This acts like [split_whitespace][str::split_whitespace], but yields owned instances. It
+    /// doesn't clone the content, it just increments some reference counts.
     pub fn split_whitespace_bytes(self) -> impl Iterator<Item = Self> {
         BytesIter::new(self, Direction::Forward, |s| sep_find(s, char::is_whitespace))
             .filter(|s| !s.is_empty())
     }
 
+    /// Splits into whitespace separated "words".
+    ///
+    /// This acts like [split_ascii_whitespace][str::split_ascii_whitespace], but yields owned
+    /// instances. This doesn't clone the content, it just increments some reference counts.
     pub fn split_ascii_whitespace_bytes(self) -> impl Iterator<Item = Self> {
         BytesIter::new(self, Direction::Forward, |s| sep_find(s, |c| {
                 c.is_ascii() && (c as u8).is_ascii_whitespace()
@@ -219,6 +383,10 @@ impl<S: Storage> StrInner<S> {
             .filter(|s| !s.is_empty())
     }
 
+    /// Splits into lines.
+    ///
+    /// This acts like [lines][str::lines], but yields owned instances. The content is not cloned,
+    /// this just increments some reference counts.
     pub fn lines_bytes(self) -> impl Iterator<Item = Self> {
         if self.is_empty() {
             Either::Left(iter::empty())
@@ -232,13 +400,17 @@ impl<S: Storage> StrInner<S> {
         }
     }
 
-    // TODO: Pattern API? :-(
+    /// Splits with the provided separator.
+    ///
+    /// This acts somewhat like [split][str::split], but yields owned instances. Also, it accepts
+    /// only string patters (since the `Pattern` is not stable ☹). The content is not cloned, this
+    /// just increments some reference counts.
     pub fn split_bytes<'s>(self, sep: &'s str) -> impl Iterator<Item = Self> + 's
     where
         S: 's,
     {
         if sep.is_empty() {
-            let bulk = BytesIter::new(self, Direction::Forward, |s| empty_seps(s, usize::MAX));
+            let bulk = BytesIter::new(self, Direction::Forward, |s| empty_sep(s, usize::MAX));
             Either::Left(iter::once(Self::default()).chain(bulk))
         } else {
             let sep_find = move |s: &str| {
@@ -248,6 +420,11 @@ impl<S: Storage> StrInner<S> {
         }
     }
 
+    /// Splits max. `n` times according to the given pattern.
+    ///
+    /// This acts somewhat like [splitn][str::splitn], but yields owned instances. Also, it accepts
+    /// only string patters (since the `Pattern` is not stable ☹). The content is not cloned, this
+    /// just increments some reference counts.
     pub fn splitn_bytes<'s>(self, mut n: usize, sep: &'s str) -> impl Iterator<Item = Self> + 's
     where
         S: 's,
@@ -260,7 +437,7 @@ impl<S: Storage> StrInner<S> {
                 n -= 1;
                 let bulk = BytesIter::new(self, Direction::Forward, move |s| {
                     n -= 1;
-                    empty_seps(s, n)
+                    empty_sep(s, n)
                 });
                 Either::Left(Either::Right(iter::once(Self::default()).chain(bulk)))
             }
@@ -277,12 +454,13 @@ impl<S: Storage> StrInner<S> {
         }
     }
 
+    /// A reverse version of [split_bytes][Self::split_bytes].
     pub fn rsplit_bytes<'s>(self, sep: &'s str) -> impl Iterator<Item = Self> + 's
     where
         S: 's,
     {
         if sep.is_empty() {
-            let bulk = BytesIter::new(self, Direction::Backward, |s| rempty_seps(s, usize::MAX));
+            let bulk = BytesIter::new(self, Direction::Backward, |s| rempty_sep(s, usize::MAX));
             Either::Left(iter::once(Self::default()).chain(bulk))
         } else {
             let sep_find = move |s: &str| {
@@ -292,6 +470,7 @@ impl<S: Storage> StrInner<S> {
         }
     }
 
+    /// A reverse version of [splitn_bytes][Self::splitn_bytes].
     pub fn rsplitn_bytes<'s>(self, mut n: usize, sep: &'s str) -> impl Iterator<Item = Self> + 's
     where
         S: 's,
@@ -304,7 +483,7 @@ impl<S: Storage> StrInner<S> {
                 n -= 1;
                 let bulk = BytesIter::new(self, Direction::Backward, move |s| {
                     n -= 1;
-                    rempty_seps(s, n)
+                    rempty_sep(s, n)
                 });
                 Either::Left(Either::Right(iter::once(Self::default()).chain(bulk)))
             }
@@ -323,17 +502,30 @@ impl<S: Storage> StrInner<S> {
 }
 
 impl<S: StorageMut> StrInner<S> {
+    /// Appends a string.
     pub fn push_str(&mut self, s: &str) {
         self.0.push_slice(s.as_bytes());
     }
+
+    /// Appends one character.
     pub fn push(&mut self, c: char) {
         self.push_str(c.encode_utf8(&mut [0; 4]));
     }
+
+    /// Provides mutable access to the inner buffer.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the content stays valid UTF8.
     pub unsafe fn inner_mut(&mut self) -> &mut S {
         &mut self.0
     }
+
+    /// Turns the mutable variant into an immutable one.
+    ///
+    /// The advantage is that it can then be shared (also by small parts).
     pub fn freeze(self) -> StrInner<S::Immutable> {
-        StrInner(self.0.into_immutable())
+        StrInner(S::Immutable::from_creator(self.0))
     }
 }
 
@@ -621,9 +813,25 @@ macro_rules! format_bytes_mut {
 
 // TODO: Serde
 
+/// An immutable variant of [Bytes]-backed string.
+///
+/// The methods and their documentation are on [StrInner], but users are mostly expected to use
+/// this and the [StrMut] aliases.
 pub type Str = StrInner<Bytes>;
 
 impl Str {
+    /// Extracts a subslice of the string as an owned [Str].
+    ///
+    /// # Panics
+    ///
+    /// If the byte indices in the range are not on char boundaries.
+    pub fn slice<R>(&self, range: R) -> Str
+    where
+        str: Index<R, Output = str>,
+    {
+        self.slice_ref(&self[range])
+    }
+
     /// Extracts owned representation of the slice passed.
     ///
     /// This method accepts a string sub-slice of `self`. It then extracts the slice but as the
@@ -654,10 +862,26 @@ impl Str {
     }
 }
 
+/// A mutable variant of [BytesMut]-backed string.
+///
+/// Unlike [Str], this one allows modifications (mostly additions), but also doesn't allow
+/// overlapping/shared chunks.
+///
+/// This is internally backed by the [StrInner] type, so the documentation of the methods are on
+/// that.
 pub type StrMut = StrInner<BytesMut>;
+
+impl StrMut {
+    /// Splits and returns the part of already built string, but keeps the extra capacity.
+    pub fn split_built(&mut self) -> StrMut {
+        StrInner(self.0.split())
+    }
+}
 
 #[cfg(test)]
 mod tests {
+    use std::panic;
+
     use itertools::Itertools;
     use proptest::prelude::*;
 
@@ -685,6 +909,44 @@ mod tests {
         assert_eq!("", v[0]);
         assert_eq!("a", v[1]);
         assert_eq!("", v[2]);
+    }
+
+    #[test]
+    fn slice_checks_char_boundaries() {
+        let v = Str::from("😈");
+        assert_eq!(4, v.len());
+        panic::catch_unwind(|| v.slice(1..)).unwrap_err();
+    }
+
+    #[test]
+    fn split_at_bytes_mid() {
+        let v = Str::from("hello");
+        let (l, r) = v.split_at_bytes(2);
+        assert_eq!("he", l);
+        assert_eq!("llo", r);
+    }
+
+    #[test]
+    fn split_at_bytes_begin() {
+        let v = Str::from("hello");
+        let (l, r) = v.split_at_bytes(0);
+        assert_eq!("", l);
+        assert_eq!("hello", r);
+    }
+
+    #[test]
+    fn split_at_bytes_end() {
+        let v = Str::from("hello");
+        let (l, r) = v.split_at_bytes(5);
+        assert_eq!("hello", l);
+        assert_eq!("", r);
+    }
+
+    #[test]
+    fn split_at_bytes_panic() {
+        let v = Str::from("😈");
+        assert_eq!(4, v.len());
+        panic::catch_unwind(|| v.split_at_bytes(2)).unwrap_err();
     }
 
     proptest! {

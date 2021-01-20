@@ -14,6 +14,12 @@
 //! ## The content
 //!
 //! * [SegmentedBuf] for concatenating multiple buffers into a large one without copying the bytes.
+//! * [Str] and [StrMut] are wrappers around [Bytes][bytes::Bytes] and [BytesMut]
+//!   respectively, providing a [String]-like interface. They allow splitting into owned
+//!   sub-slices, similar to how the [Bytes] and [BytesMut] work.
+//!
+//! [Bytes]: bytes::Bytes
+//! [BytesMut]: bytes::BytesMut
 
 mod segmented;
 pub mod string;
