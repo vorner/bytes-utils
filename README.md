@@ -11,6 +11,7 @@ Currently contains:
 
 * `SegmentedBuf` that can concatenate multiple `Buf`s into a bigger one without
   copying.
+* `Str` and `StrMut`, string wrappers around `Bytes` and `BytesMut`.
 
 ## License
 
