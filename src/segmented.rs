@@ -2,9 +2,25 @@
 
 use std::cmp;
 use std::collections::VecDeque;
+use std::io::IoSlice;
 use std::iter::FromIterator;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+
+fn chunks_vectored<'s, B, I>(bufs: I, dst: &mut [IoSlice<'s>]) -> usize
+where
+    I: Iterator<Item = &'s B>,
+    B: Buf + 's,
+{
+    let mut filled = 0;
+    for buf in bufs {
+        if filled == dst.len() {
+            break;
+        }
+        filled += buf.chunks_vectored(&mut dst[filled..]);
+    }
+    filled
+}
 
 /// A consumable view of a sequence of buffers.
 ///
@@ -38,6 +54,9 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 /// single buffer). If that one is optimized (for example, the [Bytes] returns a shared instance
 /// instead of making a copy), the copying is avoided. If the request is across a buffer boundary,
 /// a copy is made.
+///
+/// The [chunks_vectored][SegmentedSlice::chunks_vectored] will properly output as many slices as
+/// possible, not just 1 as the default implementation does.
 #[derive(Debug, Default)]
 pub struct SegmentedSlice<'a, B> {
     remaining: usize,
@@ -112,6 +131,11 @@ impl<'a, B: Buf> Buf for SegmentedSlice<'a, B> {
                 res.freeze()
             }
         }
+    }
+
+    fn chunks_vectored<'s>(&'s self, dst: &mut [IoSlice<'s>]) -> usize {
+        let bufs = self.bufs.get(self.idx..).unwrap_or_default();
+        chunks_vectored(bufs.iter(), dst)
     }
 }
 
@@ -200,11 +224,14 @@ impl<'a, B: Buf> Buf for SegmentedSlice<'a, B> {
 ///
 /// # Optimizations
 ///
-/// The [copy_to_bytes][SegmentedSlice::copy_to_bytes] method tries to avoid copies by delegating
+/// The [copy_to_bytes][SegmentedBuf::copy_to_bytes] method tries to avoid copies by delegating
 /// into the underlying buffer if possible (if the whole request can be fulfilled using only a
 /// single buffer). If that one is optimized (for example, the [Bytes] returns a shared instance
 /// instead of making a copy), the copying is avoided. If the request is across a buffer boundary,
 /// a copy is made.
+///
+/// The [chunks_vectored][SegmentedBuf::chunks_vectored] will properly output as many slices as
+/// possible, not just 1 as the default implementation does.
 ///
 /// [hyper]: https://docs.rs/hyper
 /// [serde]: https://docs.rs/serde
@@ -364,6 +391,10 @@ impl<B: Buf> Buf for SegmentedBuf<B> {
             }
         }
     }
+
+    fn chunks_vectored<'a>(&'a self, dst: &mut [IoSlice<'a>]) -> usize {
+        chunks_vectored(self.bufs.iter(), dst)
+    }
 }
 
 #[cfg(test)]
@@ -500,6 +531,40 @@ mod tests {
             .read_to_string(&mut out)
             .expect("Doesn't cause IO errors");
         assert_eq!("Hello World", out);
+    }
+
+    #[test]
+    fn chunk_vectored() {
+        let mut b = segmented();
+        assert_eq!(b.chunks_vectored(&mut []), 0);
+        let mut slices = [IoSlice::new(&[]); 5];
+        assert_eq!(b.segments(), 4);
+        assert_eq!(b.chunks_vectored(&mut slices), 3);
+        assert_eq!(&*slices[0], b"Hello");
+        assert_eq!(&*slices[1], b" ");
+        assert_eq!(&*slices[2], b"World");
+        b.advance(2);
+        let mut slices = [IoSlice::new(&[]); 1];
+        assert_eq!(b.chunks_vectored(&mut slices), 1);
+        assert_eq!(&*slices[0], b"llo");
+    }
+
+    #[test]
+    fn chunk_vectored_nested() {
+        let mut bufs = [segmented(), segmented()];
+        let mut bufs = SegmentedSlice::new(&mut bufs);
+        let mut slices = [IoSlice::new(&[]); 10];
+        assert_eq!(bufs.chunks_vectored(&mut slices), 6);
+        assert_eq!(&*slices[0], b"Hello");
+        assert_eq!(&*slices[1], b" ");
+        assert_eq!(&*slices[2], b"World");
+        assert_eq!(&*slices[3], b"Hello");
+        assert_eq!(&*slices[4], b" ");
+        assert_eq!(&*slices[5], b"World");
+        bufs.advance(2);
+        let mut slices = [IoSlice::new(&[]); 1];
+        assert_eq!(bufs.chunks_vectored(&mut slices), 1);
+        assert_eq!(&*slices[0], b"llo");
     }
 
     proptest! {
