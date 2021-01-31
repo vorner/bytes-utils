@@ -1,3 +1,9 @@
+# 0.1.1
+
+* Implement the `chunk_vectored` in a way it returns more than one chunk if
+  possible.
+* SegmentedSlice added, for avoiding allocation of the VecDeque in SegmentedBuf.
+
 # 0.1.0
 
 * Initial code for the SegmentedBuf.

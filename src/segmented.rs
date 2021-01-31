@@ -1,14 +1,152 @@
 #![forbid(unsafe_code)]
 
+use std::cmp;
 use std::collections::VecDeque;
+use std::io::IoSlice;
 use std::iter::FromIterator;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+
+fn chunks_vectored<'s, B, I>(bufs: I, dst: &mut [IoSlice<'s>]) -> usize
+where
+    I: Iterator<Item = &'s B>,
+    B: Buf + 's,
+{
+    let mut filled = 0;
+    for buf in bufs {
+        if filled == dst.len() {
+            break;
+        }
+        filled += buf.chunks_vectored(&mut dst[filled..]);
+    }
+    filled
+}
+
+/// A consumable view of a sequence of buffers.
+///
+/// This allows viewing a sequence of buffers as one buffer, without copying the bytes over. Unlike
+/// the [SegmentedBuf], this doesn't allow for appending more buffers and doesn't drop the buffers
+/// as they are exhausted (though they all get exhausted, no leftovers are kept in them as the
+/// caller advances through it). On the other hand, it doesn't require an internal allocation in
+/// the form of VecDeque and can be based on any kind of slice.
+///
+/// # Example
+///
+/// ```rust
+/// # use bytes_utils::SegmentedSlice;
+/// # use bytes::Buf;
+/// # use std::io::Read;
+/// let mut buffers = [b"Hello" as &[_], b"", b" ", b"", b"World"];
+/// let buf = SegmentedSlice::new(&mut buffers);
+///
+/// assert_eq!(11, buf.remaining());
+/// assert_eq!(b"Hello", buf.chunk());
+///
+/// let mut out = String::new();
+/// buf.reader().read_to_string(&mut out).expect("Doesn't cause IO errors");
+/// assert_eq!("Hello World", out);
+/// ```
+///
+/// # Optimizations
+///
+/// The [copy_to_bytes][SegmentedSlice::copy_to_bytes] method tries to avoid copies by delegating
+/// into the underlying buffer if possible (if the whole request can be fulfilled using only a
+/// single buffer). If that one is optimized (for example, the [Bytes] returns a shared instance
+/// instead of making a copy), the copying is avoided. If the request is across a buffer boundary,
+/// a copy is made.
+///
+/// The [chunks_vectored][SegmentedSlice::chunks_vectored] will properly output as many slices as
+/// possible, not just 1 as the default implementation does.
+#[derive(Debug, Default)]
+pub struct SegmentedSlice<'a, B> {
+    remaining: usize,
+    idx: usize,
+    bufs: &'a mut [B],
+}
+
+impl<'a, B: Buf> SegmentedSlice<'a, B> {
+    /// Creates a new buffer out of a slice of buffers.
+    ///
+    /// The buffers will then be taken in order to form one bigger buffer.
+    ///
+    /// Each of the buffers in turn will be exhausted using its [advance][Buf::advance] before
+    /// proceeding to the next one. Note that the buffers are not dropped (unlike with
+    /// [SegmentedBuf]).
+    pub fn new(bufs: &'a mut [B]) -> Self {
+        let remaining = bufs.iter().map(Buf::remaining).sum();
+        let mut me = Self {
+            remaining,
+            idx: 0,
+            bufs,
+        };
+        me.clean_empty();
+        me
+    }
+
+    fn clean_empty(&mut self) {
+        while self.idx < self.bufs.len() && !self.bufs[self.idx].has_remaining() {
+            self.idx += 1;
+        }
+    }
+}
+
+impl<'a, B: Buf> Buf for SegmentedSlice<'a, B> {
+    fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    fn chunk(&self) -> &[u8] {
+        self.bufs.get(self.idx).map(Buf::chunk).unwrap_or_default()
+    }
+
+    fn advance(&mut self, mut cnt: usize) {
+        self.remaining -= cnt;
+        while cnt > 0 {
+            let first = &mut self.bufs[self.idx];
+            let rem = first.remaining();
+            let segment = cmp::min(rem, cnt);
+            first.advance(segment);
+            cnt -= segment;
+            self.clean_empty();
+        }
+    }
+
+    fn copy_to_bytes(&mut self, len: usize) -> Bytes {
+        assert!(len <= self.remaining(), "`len` greater than remaining");
+        match self.bufs.get_mut(self.idx) {
+            // Special optimized case. The whole request comes from the front buffer. That one may
+            // be optimized to do something more efficient, like slice the Bytes (if B == Bytes)
+            // instead of copying, so we take the opportunity if it offers itself.
+            Some(front) if front.remaining() >= len => {
+                self.remaining -= len;
+                let res = front.copy_to_bytes(len);
+                self.clean_empty();
+                res
+            }
+            // The general case, borrowed from the default implementation (there's no way to
+            // delegate to it, is there?)
+            _ => {
+                let mut res = BytesMut::with_capacity(len);
+                res.put(self.take(len));
+                res.freeze()
+            }
+        }
+    }
+
+    fn chunks_vectored<'s>(&'s self, dst: &mut [IoSlice<'s>]) -> usize {
+        let bufs = self.bufs.get(self.idx..).unwrap_or_default();
+        chunks_vectored(bufs.iter(), dst)
+    }
+}
 
 /// A concatenation of multiple buffers into a large one, without copying the bytes over.
 ///
 /// Note that this doesn't provide a continuous slice view into them, it is split into the segments
 /// of the original smaller buffers.
+///
+/// This variants drop the inner buffers as they are exhausted and new ones can be added. But it
+/// internally keeps a [VecDeque], therefore needs a heap allocation. If you don't need the
+/// extending behaviour, but want to avoid the allocation, the [SegmentedSlice] can be used instead.
 ///
 /// # Why
 ///
@@ -83,6 +221,17 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 /// assert_eq!(4, buf.remaining());
 /// assert_eq!(1, buf.segments());
 /// ```
+///
+/// # Optimizations
+///
+/// The [copy_to_bytes][SegmentedBuf::copy_to_bytes] method tries to avoid copies by delegating
+/// into the underlying buffer if possible (if the whole request can be fulfilled using only a
+/// single buffer). If that one is optimized (for example, the [Bytes] returns a shared instance
+/// instead of making a copy), the copying is avoided. If the request is across a buffer boundary,
+/// a copy is made.
+///
+/// The [chunks_vectored][SegmentedBuf::chunks_vectored] will properly output as many slices as
+/// possible, not just 1 as the default implementation does.
 ///
 /// [hyper]: https://docs.rs/hyper
 /// [serde]: https://docs.rs/serde
@@ -242,12 +391,16 @@ impl<B: Buf> Buf for SegmentedBuf<B> {
             }
         }
     }
+
+    fn chunks_vectored<'a>(&'a self, dst: &mut [IoSlice<'a>]) -> usize {
+        chunks_vectored(self.bufs.iter(), dst)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cmp;
     use std::io::Read;
+    use std::ops::Deref;
 
     use proptest::prelude::*;
 
@@ -261,6 +414,19 @@ mod tests {
         assert_eq!(0, b.remaining());
         assert!(b.chunk().is_empty());
         assert_eq!(0, b.segments());
+
+        b.copy_to_slice(&mut []);
+        b.advance(0);
+        assert_eq!(0, b.reader().read(&mut [0; 10]).unwrap());
+    }
+
+    #[test]
+    fn empty_slices() {
+        let mut b = SegmentedSlice::<&[u8]>::default();
+
+        assert!(!b.has_remaining());
+        assert_eq!(0, b.remaining());
+        assert!(b.chunk().is_empty());
 
         b.copy_to_slice(&mut []);
         b.advance(0);
@@ -352,6 +518,55 @@ mod tests {
         is_empty(&b);
     }
 
+    #[test]
+    fn sliced_hello() {
+        let mut buffers = [b"Hello" as &[_], b"", b" ", b"", b"World"];
+        let buf = SegmentedSlice::new(&mut buffers);
+
+        assert_eq!(11, buf.remaining());
+        assert_eq!(b"Hello", buf.chunk());
+
+        let mut out = String::new();
+        buf.reader()
+            .read_to_string(&mut out)
+            .expect("Doesn't cause IO errors");
+        assert_eq!("Hello World", out);
+    }
+
+    #[test]
+    fn chunk_vectored() {
+        let mut b = segmented();
+        assert_eq!(b.chunks_vectored(&mut []), 0);
+        let mut slices = [IoSlice::new(&[]); 5];
+        assert_eq!(b.segments(), 4);
+        assert_eq!(b.chunks_vectored(&mut slices), 3);
+        assert_eq!(&*slices[0], b"Hello");
+        assert_eq!(&*slices[1], b" ");
+        assert_eq!(&*slices[2], b"World");
+        b.advance(2);
+        let mut slices = [IoSlice::new(&[]); 1];
+        assert_eq!(b.chunks_vectored(&mut slices), 1);
+        assert_eq!(&*slices[0], b"llo");
+    }
+
+    #[test]
+    fn chunk_vectored_nested() {
+        let mut bufs = [segmented(), segmented()];
+        let mut bufs = SegmentedSlice::new(&mut bufs);
+        let mut slices = [IoSlice::new(&[]); 10];
+        assert_eq!(bufs.chunks_vectored(&mut slices), 6);
+        assert_eq!(&*slices[0], b"Hello");
+        assert_eq!(&*slices[1], b" ");
+        assert_eq!(&*slices[2], b"World");
+        assert_eq!(&*slices[3], b"Hello");
+        assert_eq!(&*slices[4], b" ");
+        assert_eq!(&*slices[5], b"World");
+        bufs.advance(2);
+        let mut slices = [IoSlice::new(&[]); 1];
+        assert_eq!(bufs.chunks_vectored(&mut slices), 1);
+        assert_eq!(&*slices[0], b"llo");
+    }
+
     proptest! {
         #[test]
         fn random(bufs: Vec<Vec<u8>>, splits in proptest::collection::vec(0..10usize, 1..10)) {
@@ -364,6 +579,8 @@ mod tests {
             assert!(concat.starts_with(segmented.chunk()));
             let mut bytes = segmented.clone().copy_to_bytes(segmented.remaining());
             assert_eq!(&concat[..], &bytes[..]);
+            let mut sliced = bufs.iter().map(Deref::deref).collect::<Vec<&[u8]>>();
+            let mut sliced = SegmentedSlice::new(&mut sliced);
 
             let mut fifo = SegmentedBuf::new();
             let mut buf_pos = bufs.iter();
@@ -378,8 +595,11 @@ mod tests {
                 }
                 let c1 = bytes.copy_to_bytes(split);
                 let c2 = segmented.copy_to_bytes(split);
+                let c3 = sliced.copy_to_bytes(split);
                 assert_eq!(c1, c2);
+                assert_eq!(c1, c3);
                 assert_eq!(bytes.remaining(), segmented.remaining());
+                assert_eq!(bytes.remaining(), sliced.remaining());
             }
         }
     }
