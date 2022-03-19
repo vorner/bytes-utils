@@ -1,5 +1,6 @@
 #![doc(test(attr(deny(warnings))))]
 #![warn(missing_docs)]
+#![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 
 //! # Extra utilities for the [bytes] crate.
 //!
@@ -21,6 +22,8 @@
 //!
 //! [Bytes]: bytes::Bytes
 //! [BytesMut]: bytes::BytesMut
+
+extern crate alloc;
 
 mod segmented;
 pub mod string;

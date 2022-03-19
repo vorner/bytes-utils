@@ -68,15 +68,20 @@
 //! Str::try_from(Bytes::from_static(&[0, 0, 255])).unwrap_err();
 //! ```
 
-use std::borrow::{Borrow, BorrowMut, Cow};
-use std::cmp::Ordering;
-use std::convert::{Infallible, TryFrom};
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::string::String;
+use core::borrow::{Borrow, BorrowMut};
+use core::cmp::Ordering;
+use core::convert::{Infallible, TryFrom};
+use core::fmt::{Debug, Display, Formatter, Result as FmtResult, Write};
+use core::hash::{Hash, Hasher};
+use core::iter::{self, FromIterator};
+use core::ops::{Add, AddAssign, Deref, DerefMut, Index, IndexMut};
+use core::str::{self, FromStr};
+
+#[cfg(feature = "std")]
 use std::error::Error;
-use std::fmt::{Debug, Display, Formatter, Result as FmtResult, Write};
-use std::hash::{Hash, Hasher};
-use std::iter::{self, FromIterator};
-use std::ops::{Add, AddAssign, Deref, DerefMut, Index, IndexMut};
-use std::str::{self, FromStr};
 
 use bytes::{Bytes, BytesMut};
 use either::Either;
@@ -84,7 +89,7 @@ use either::Either;
 /// Error when creating [Str] or [StrMut] from invalid UTF8 data.
 #[derive(Copy, Clone, Debug)]
 pub struct Utf8Error<S> {
-    e: str::Utf8Error,
+    e: core::str::Utf8Error,
     inner: S,
 }
 
@@ -106,6 +111,7 @@ impl<S> Display for Utf8Error<S> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<S: Debug> Error for Utf8Error<S> {}
 
 /// Direction of iteration.

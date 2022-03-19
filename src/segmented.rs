@@ -1,12 +1,15 @@
 #![forbid(unsafe_code)]
 
-use std::cmp;
-use std::collections::VecDeque;
-use std::io::IoSlice;
-use std::iter::FromIterator;
-
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use core::cmp;
+use core::iter::FromIterator;
 
+#[cfg(feature = "std")]
+use std::io::IoSlice;
+
+#[cfg(feature = "std")]
 fn chunks_vectored<'s, B, I>(bufs: I, dst: &mut [IoSlice<'s>]) -> usize
 where
     I: Iterator<Item = &'s B>,
@@ -133,6 +136,7 @@ impl<'a, B: Buf> Buf for SegmentedSlice<'a, B> {
         }
     }
 
+    #[cfg(feature = "std")]
     fn chunks_vectored<'s>(&'s self, dst: &mut [IoSlice<'s>]) -> usize {
         let bufs = self.bufs.get(self.idx..).unwrap_or_default();
         chunks_vectored(bufs.iter(), dst)
@@ -392,6 +396,7 @@ impl<B: Buf> Buf for SegmentedBuf<B> {
         }
     }
 
+    #[cfg(feature = "std")]
     fn chunks_vectored<'a>(&'a self, dst: &mut [IoSlice<'a>]) -> usize {
         chunks_vectored(self.bufs.iter(), dst)
     }
