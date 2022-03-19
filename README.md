@@ -13,7 +13,11 @@ Currently contains:
   copying.
 * `Str` and `StrMut`, string wrappers around `Bytes` and `BytesMut`.
 
-## License
+## Features
+
+`no_std` builds are supported by disabling the `std` feature, which is enabled by default.
+
+# License
 
 Licensed under either of
 
