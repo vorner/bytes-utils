@@ -61,6 +61,10 @@
 //! let e = Str::new();
 //! assert_eq!("", e);
 //!
+//! // And from static str in O(1)
+//! let b = Str::from_static("World");
+//! assert_eq!("World", b);
+//!
 //! // And from Bytes too.
 //! let b = Str::try_from(Bytes::from_static(b"World")).expect("Must be utf8");
 //! assert_eq!("World", b);
@@ -349,7 +353,7 @@ impl<S: Storage> StrInner<S> {
     /// # Safety
     ///
     /// The caller must ensure content is valid UTF8.
-    pub unsafe fn from_inner_unchecked(s: S) -> Self {
+    pub const unsafe fn from_inner_unchecked(s: S) -> Self {
         Self(s)
     }
 
@@ -857,6 +861,13 @@ impl Str {
     pub fn slice_ref(&self, subslice: &str) -> Self {
         let sub = self.0.slice_ref(subslice.as_bytes());
         Self(sub)
+    }
+
+    /// Create [`Str`] from static string in O(1).
+    pub const fn from_static(s: &'static str) -> Self {
+        let bytes = Bytes::from_static(s.as_bytes());
+        // Safety: bytes is constructed from str
+        unsafe { Str::from_inner_unchecked(bytes) }
     }
 }
 
