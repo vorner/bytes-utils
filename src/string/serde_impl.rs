@@ -2,10 +2,8 @@ use core::ops::Deref;
 
 use super::{Storage, StrInner};
 
-use serde::{
-    de::{Deserialize, Deserializer, Error, Unexpected},
-    Serialize, Serializer,
-};
+use serde::de::{Deserialize, Deserializer, Error, Unexpected};
+use serde::{Serialize, Serializer};
 
 impl<S: Storage> Serialize for StrInner<S> {
     fn serialize<Ser>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error>
