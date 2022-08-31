@@ -12,7 +12,7 @@ impl<S: Storage> Serialize for StrInner<S> {
     where
         Ser: Serializer,
     {
-        let s = Deref::deref(self);
+        let s: &str = Deref::deref(self);
         s.serialize(serializer)
     }
 }
