@@ -1,3 +1,8 @@
+# 0.1.3
+
+* Serde support for the stringly wrappers.
+* `string::from_static`.
+
 # 0.1.2
 
 * No-std support.
