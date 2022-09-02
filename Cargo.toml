@@ -25,3 +25,4 @@ std = ["bytes/default", "either/default"]
 [dev-dependencies]
 itertools = "^0.10"
 proptest = "^0.10"
+serde_test = "1.0.144"
