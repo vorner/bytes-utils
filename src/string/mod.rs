@@ -90,6 +90,9 @@ use std::error::Error;
 use bytes::{Bytes, BytesMut};
 use either::Either;
 
+#[cfg(feature = "serde")]
+mod serde_impl;
+
 /// Error when creating [Str] or [StrMut] from invalid UTF8 data.
 #[derive(Copy, Clone, Debug)]
 pub struct Utf8Error<S> {
@@ -812,8 +815,6 @@ macro_rules! format_bytes_mut {
         buf
     }}
 }
-
-// TODO: Serde
 
 /// An immutable variant of [Bytes]-backed string.
 ///

@@ -16,11 +16,14 @@ license = "Apache-2.0/MIT"
 [dependencies]
 bytes = { version = "1", default-features = false }
 either = { version = "1", default-features = false }
+serde = { version = "1", optional = true, default-features = false }
 
 [features]
 default = ["std"]
 std = ["bytes/default", "either/default"]
+serde = ["dep:serde", "bytes/serde"]
 
 [dev-dependencies]
 itertools = "^0.10"
 proptest = "^0.10"
+serde_test = "1.0.144"
