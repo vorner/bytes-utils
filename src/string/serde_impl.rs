@@ -29,3 +29,21 @@ impl<'de, S: Storage + Deserialize<'de>> Deserialize<'de> for StrInner<S> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{Str, StrMut};
+    use serde_test::{assert_tokens, Token};
+
+    #[test]
+    fn test_de_ser_str() {
+        const S: &str = "Hello, world!";
+        assert_tokens(&Str::from_static(S), &[Token::BorrowedStr(S)]);
+    }
+
+    #[test]
+    fn test_de_ser_str_mut() {
+        const S: &str = "Hello, world!";
+        assert_tokens(&StrMut::from(S), &[Token::BorrowedStr(S)]);
+    }
+}
