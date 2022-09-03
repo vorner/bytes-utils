@@ -320,7 +320,7 @@ unsafe impl StorageMut for BytesMut {
 /// For technical reasons, both are implemented in one go as this type. For the same reason, most
 /// of the documentation can be found here. Users are expected to use the [Str] and [StrMut]
 /// instead.
-#[derive(Copy, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct StrInner<S>(S);
 
 impl<S: Storage> StrInner<S> {
@@ -648,7 +648,56 @@ impl<'a, S: StorageMut> Extend<&'a char> for StrInner<S> {
     }
 }
 
-macro_rules! e {
+macro_rules! impl_extend {
+    ($ty: ty) => {
+        impl<S: StorageMut> Extend<$ty> for StrInner<S> {
+            fn extend<T: IntoIterator<Item = $ty>>(&mut self, iter: T) {
+                for i in iter {
+                    self.push_str(i.as_ref());
+                }
+            }
+        }
+
+        impl<S> FromIterator<$ty> for StrInner<S>
+        where
+            S: Storage,
+        {
+            fn from_iter<T: IntoIterator<Item = $ty>>(iter: T) -> Self {
+                let mut creator = StrInner(S::Creator::default());
+                creator.extend(iter);
+                StrInner(S::from_creator(creator.0))
+            }
+        }
+
+        impl From<$ty> for StrMut {
+            fn from(s: $ty) -> Self {
+                iter::once(s).collect()
+            }
+        }
+    };
+}
+
+impl_extend!(String);
+impl_extend!(Box<str>);
+
+impl From<String> for Str {
+    fn from(s: String) -> Self {
+        let inner = Bytes::from(s.into_bytes());
+        // Safety: inner is constructed from a str
+        unsafe { Str::from_inner_unchecked(inner) }
+    }
+}
+
+impl From<Box<str>> for Str {
+    fn from(s: Box<str>) -> Self {
+        let s: Box<[u8]> = s.into();
+        let inner = Bytes::from(s);
+        // Safety: inner is constructed from a str
+        unsafe { Str::from_inner_unchecked(inner) }
+    }
+}
+
+macro_rules! impl_extend_with_lifetime {
     ($ty: ty) => {
         impl<'a, S: StorageMut> Extend<$ty> for StrInner<S> {
             fn extend<T: IntoIterator<Item = $ty>>(&mut self, iter: T) {
@@ -680,13 +729,11 @@ macro_rules! e {
     };
 }
 
-e!(String);
-e!(&'a String);
-e!(Box<str>);
-e!(&'a str);
-e!(Cow<'a, str>);
+impl_extend_with_lifetime!(&'a String);
+impl_extend_with_lifetime!(&'a str);
+impl_extend_with_lifetime!(Cow<'a, str>);
 
-macro_rules! t {
+macro_rules! impl_try_from {
     ($ty: ty) => {
         impl TryFrom<$ty> for StrInner<$ty> {
             type Error = Utf8Error<$ty>;
@@ -703,8 +750,8 @@ macro_rules! t {
     };
 }
 
-t!(Bytes);
-t!(BytesMut);
+impl_try_from!(Bytes);
+impl_try_from!(BytesMut);
 
 impl From<StrMut> for Str {
     fn from(s: StrMut) -> Self {
@@ -740,7 +787,38 @@ impl<S: Storage> Ord for StrInner<S> {
     }
 }
 
-macro_rules! c {
+macro_rules! impl_partrial_eq {
+    ($ty: ty) => {
+        impl<S: Storage> PartialEq<$ty> for StrInner<S> {
+            fn eq(&self, other: &$ty) -> bool {
+                self.deref() == other.deref()
+            }
+        }
+
+        impl<S: Storage> PartialEq<StrInner<S>> for $ty {
+            fn eq(&self, other: &StrInner<S>) -> bool {
+                self.deref() == other.deref()
+            }
+        }
+
+        impl<S: Storage> PartialOrd<$ty> for StrInner<S> {
+            fn partial_cmp(&self, other: &$ty) -> Option<Ordering> {
+                Some(self.deref().cmp(other.deref()))
+            }
+        }
+
+        impl<S: Storage> PartialOrd<StrInner<S>> for $ty {
+            fn partial_cmp(&self, other: &StrInner<S>) -> Option<Ordering> {
+                Some(self.deref().cmp(other.deref()))
+            }
+        }
+    };
+}
+
+impl_partrial_eq!(String);
+impl_partrial_eq!(Box<str>);
+
+macro_rules! impl_partrial_eq_with_lifetime {
     ($ty: ty) => {
         impl<'a, S: Storage> PartialEq<$ty> for StrInner<S> {
             fn eq(&self, other: &$ty) -> bool {
@@ -768,11 +846,9 @@ macro_rules! c {
     };
 }
 
-c!(&'a str);
-c!(&'a mut str);
-c!(String);
-c!(Box<str>);
-c!(Cow<'a, str>);
+impl_partrial_eq_with_lifetime!(&'a str);
+impl_partrial_eq_with_lifetime!(&'a mut str);
+impl_partrial_eq_with_lifetime!(Cow<'a, str>);
 
 impl<S: StorageMut> Write for StrInner<S> {
     fn write_str(&mut self, s: &str) -> FmtResult {
@@ -780,7 +856,6 @@ impl<S: StorageMut> Write for StrInner<S> {
         Ok(())
     }
 }
-
 /// The [format] macro, but returning [Str].
 ///
 /// # Examples
