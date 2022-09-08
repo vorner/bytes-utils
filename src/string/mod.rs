@@ -649,8 +649,8 @@ impl<'a, S: StorageMut> Extend<&'a char> for StrInner<S> {
 }
 
 macro_rules! impl_extend {
-    ($ty: ty) => {
-        impl<S: StorageMut> Extend<$ty> for StrInner<S> {
+    ($ty:ty $(, $lifetimes:lifetime )* ) => {
+        impl<$($lifetimes, )* S: StorageMut> Extend<$ty> for StrInner<S> {
             fn extend<T: IntoIterator<Item = $ty>>(&mut self, iter: T) {
                 for i in iter {
                     self.push_str(i.as_ref());
@@ -658,7 +658,7 @@ macro_rules! impl_extend {
             }
         }
 
-        impl<S> FromIterator<$ty> for StrInner<S>
+        impl<$($lifetimes, )* S> FromIterator<$ty> for StrInner<S>
         where
             S: Storage,
         {
@@ -668,8 +668,21 @@ macro_rules! impl_extend {
                 StrInner(S::from_creator(creator.0))
             }
         }
+    };
+}
 
-        impl From<$ty> for StrMut {
+impl_extend!(String);
+impl_extend!(Box<str>);
+impl_extend!(&'a String, 'a);
+impl_extend!(&'a str, 'a);
+impl_extend!(Cow<'a, str>, 'a);
+
+macro_rules! impl_from {
+    ($ty:ty $(, $lifetimes:lifetime )* ) => {
+        impl<$($lifetimes, )* S> From<$ty> for StrInner<S>
+        where
+            S: Storage,
+        {
             fn from(s: $ty) -> Self {
                 iter::once(s).collect()
             }
@@ -677,8 +690,9 @@ macro_rules! impl_extend {
     };
 }
 
-impl_extend!(String);
-impl_extend!(Box<str>);
+impl_from!(&'a String, 'a);
+impl_from!(&'a str, 'a);
+impl_from!(Cow<'a, str>, 'a);
 
 impl From<String> for Str {
     fn from(s: String) -> Self {
@@ -696,42 +710,6 @@ impl From<Box<str>> for Str {
         unsafe { Str::from_inner_unchecked(inner) }
     }
 }
-
-macro_rules! impl_extend_with_lifetime {
-    ($ty: ty) => {
-        impl<'a, S: StorageMut> Extend<$ty> for StrInner<S> {
-            fn extend<T: IntoIterator<Item = $ty>>(&mut self, iter: T) {
-                for i in iter {
-                    self.push_str(i.as_ref());
-                }
-            }
-        }
-
-        impl<'a, S> FromIterator<$ty> for StrInner<S>
-        where
-            S: Storage,
-        {
-            fn from_iter<T: IntoIterator<Item = $ty>>(iter: T) -> Self {
-                let mut creator = StrInner(S::Creator::default());
-                creator.extend(iter);
-                StrInner(S::from_creator(creator.0))
-            }
-        }
-
-        impl<'a, S> From<$ty> for StrInner<S>
-        where
-            S: Storage,
-        {
-            fn from(s: $ty) -> Self {
-                iter::once(s).collect()
-            }
-        }
-    };
-}
-
-impl_extend_with_lifetime!(&'a String);
-impl_extend_with_lifetime!(&'a str);
-impl_extend_with_lifetime!(Cow<'a, str>);
 
 macro_rules! impl_try_from {
     ($ty: ty) => {
@@ -788,26 +766,26 @@ impl<S: Storage> Ord for StrInner<S> {
 }
 
 macro_rules! impl_partrial_eq {
-    ($ty: ty) => {
-        impl<S: Storage> PartialEq<$ty> for StrInner<S> {
+    ($ty: ty $(, $lifetimes:lifetime )* ) => {
+        impl<$($lifetimes, )* S: Storage> PartialEq<$ty> for StrInner<S> {
             fn eq(&self, other: &$ty) -> bool {
                 self.deref() == other.deref()
             }
         }
 
-        impl<S: Storage> PartialEq<StrInner<S>> for $ty {
+        impl<$($lifetimes, )* S: Storage> PartialEq<StrInner<S>> for $ty {
             fn eq(&self, other: &StrInner<S>) -> bool {
                 self.deref() == other.deref()
             }
         }
 
-        impl<S: Storage> PartialOrd<$ty> for StrInner<S> {
+        impl<$($lifetimes, )* S: Storage> PartialOrd<$ty> for StrInner<S> {
             fn partial_cmp(&self, other: &$ty) -> Option<Ordering> {
                 Some(self.deref().cmp(other.deref()))
             }
         }
 
-        impl<S: Storage> PartialOrd<StrInner<S>> for $ty {
+        impl<$($lifetimes, )* S: Storage> PartialOrd<StrInner<S>> for $ty {
             fn partial_cmp(&self, other: &StrInner<S>) -> Option<Ordering> {
                 Some(self.deref().cmp(other.deref()))
             }
@@ -817,38 +795,9 @@ macro_rules! impl_partrial_eq {
 
 impl_partrial_eq!(String);
 impl_partrial_eq!(Box<str>);
-
-macro_rules! impl_partrial_eq_with_lifetime {
-    ($ty: ty) => {
-        impl<'a, S: Storage> PartialEq<$ty> for StrInner<S> {
-            fn eq(&self, other: &$ty) -> bool {
-                self.deref() == other.deref()
-            }
-        }
-
-        impl<'a, S: Storage> PartialEq<StrInner<S>> for $ty {
-            fn eq(&self, other: &StrInner<S>) -> bool {
-                self.deref() == other.deref()
-            }
-        }
-
-        impl<'a, S: Storage> PartialOrd<$ty> for StrInner<S> {
-            fn partial_cmp(&self, other: &$ty) -> Option<Ordering> {
-                Some(self.deref().cmp(other.deref()))
-            }
-        }
-
-        impl<'a, S: Storage> PartialOrd<StrInner<S>> for $ty {
-            fn partial_cmp(&self, other: &StrInner<S>) -> Option<Ordering> {
-                Some(self.deref().cmp(other.deref()))
-            }
-        }
-    };
-}
-
-impl_partrial_eq_with_lifetime!(&'a str);
-impl_partrial_eq_with_lifetime!(&'a mut str);
-impl_partrial_eq_with_lifetime!(Cow<'a, str>);
+impl_partrial_eq!(&'a str, 'a);
+impl_partrial_eq!(&'a mut str, 'a);
+impl_partrial_eq!(Cow<'a, str>, 'a);
 
 impl<S: StorageMut> Write for StrInner<S> {
     fn write_str(&mut self, s: &str) -> FmtResult {
