@@ -914,10 +914,8 @@ impl StrMut {
 
 #[cfg(test)]
 mod tests {
-    use std::panic;
-
     use itertools::Itertools;
-    use proptest::prelude::*;
+    use std::panic;
 
     use super::*;
 
@@ -983,88 +981,95 @@ mod tests {
         panic::catch_unwind(|| v.split_at_bytes(2)).unwrap_err();
     }
 
-    proptest! {
-        #[test]
-        fn split_whitespace(s: String) {
-            let bstring = Str::from(&s);
+    #[cfg(not(miri))]
+    mod proptests {
+        use proptest::prelude::*;
 
-            let bw = bstring.split_whitespace_bytes();
-            let sw = s.split_whitespace();
+        use super::*;
 
-            for (b, s) in bw.zip_eq(sw) {
-                prop_assert_eq!(b, s);
+        proptest! {
+            #[test]
+            fn split_whitespace(s: String) {
+                let bstring = Str::from(&s);
+
+                let bw = bstring.split_whitespace_bytes();
+                let sw = s.split_whitespace();
+
+                for (b, s) in bw.zip_eq(sw) {
+                    prop_assert_eq!(b, s);
+                }
             }
-        }
 
-        #[test]
-        fn split_ascii_whitespace(s: String) {
-            let bstring = Str::from(&s);
+            #[test]
+            fn split_ascii_whitespace(s: String) {
+                let bstring = Str::from(&s);
 
-            let bw = bstring.split_ascii_whitespace_bytes();
-            let sw = s.split_ascii_whitespace();
+                let bw = bstring.split_ascii_whitespace_bytes();
+                let sw = s.split_ascii_whitespace();
 
-            for (b, s) in bw.zip_eq(sw) {
-                prop_assert_eq!(b, s);
+                for (b, s) in bw.zip_eq(sw) {
+                    prop_assert_eq!(b, s);
+                }
             }
-        }
 
-        #[test]
-        fn lines(s: String) {
-            let bstring = Str::from(&s);
+            #[test]
+            fn lines(s: String) {
+                let bstring = Str::from(&s);
 
-            let bl = bstring.lines_bytes();
-            let sl = s.lines();
+                let bl = bstring.lines_bytes();
+                let sl = s.lines();
 
-            for (b, s) in bl.zip_eq(sl) {
-                prop_assert_eq!(b, s);
+                for (b, s) in bl.zip_eq(sl) {
+                    prop_assert_eq!(b, s);
+                }
             }
-        }
 
-        #[test]
-        fn split(s: String, pat: String) {
-            let bstring = Str::from(&s);
+            #[test]
+            fn split(s: String, pat: String) {
+                let bstring = Str::from(&s);
 
-            let bs = bstring.split_bytes(&pat);
-            let ss = s.split(&pat);
+                let bs = bstring.split_bytes(&pat);
+                let ss = s.split(&pat);
 
-            for (b, s) in bs.zip_eq(ss) {
-                prop_assert_eq!(b, s);
+                for (b, s) in bs.zip_eq(ss) {
+                    prop_assert_eq!(b, s);
+                }
             }
-        }
 
-        #[test]
-        fn split_n(s: String, pat: String, n in 0..5usize) {
-            let bstring = Str::from(&s);
+            #[test]
+            fn split_n(s: String, pat: String, n in 0..5usize) {
+                let bstring = Str::from(&s);
 
-            let bs = bstring.splitn_bytes(n, &pat);
-            let ss = s.splitn(n, &pat);
+                let bs = bstring.splitn_bytes(n, &pat);
+                let ss = s.splitn(n, &pat);
 
-            for (b, s) in bs.zip_eq(ss) {
-                prop_assert_eq!(b, s);
+                for (b, s) in bs.zip_eq(ss) {
+                    prop_assert_eq!(b, s);
+                }
             }
-        }
 
-        #[test]
-        fn rsplit(s: String, pat: String) {
-            let bstring = Str::from(&s);
+            #[test]
+            fn rsplit(s: String, pat: String) {
+                let bstring = Str::from(&s);
 
-            let bs = bstring.rsplit_bytes(&pat);
-            let ss = s.rsplit(&pat);
+                let bs = bstring.rsplit_bytes(&pat);
+                let ss = s.rsplit(&pat);
 
-            for (b, s) in bs.zip_eq(ss) {
-                prop_assert_eq!(b, s);
+                for (b, s) in bs.zip_eq(ss) {
+                    prop_assert_eq!(b, s);
+                }
             }
-        }
 
-        #[test]
-        fn rsplit_n(s: String, pat: String, n in 0..5usize) {
-            let bstring = Str::from(&s);
+            #[test]
+            fn rsplit_n(s: String, pat: String, n in 0..5usize) {
+                let bstring = Str::from(&s);
 
-            let bs = bstring.rsplitn_bytes(n, &pat);
-            let ss = s.rsplitn(n, &pat);
+                let bs = bstring.rsplitn_bytes(n, &pat);
+                let ss = s.rsplitn(n, &pat);
 
-            for (b, s) in bs.zip_eq(ss) {
-                prop_assert_eq!(b, s);
+                for (b, s) in bs.zip_eq(ss) {
+                    prop_assert_eq!(b, s);
+                }
             }
         }
     }

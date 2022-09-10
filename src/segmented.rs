@@ -405,9 +405,6 @@ impl<B: Buf> Buf for SegmentedBuf<B> {
 #[cfg(test)]
 mod tests {
     use std::io::Read;
-    use std::ops::Deref;
-
-    use proptest::prelude::*;
 
     use super::*;
 
@@ -572,39 +569,47 @@ mod tests {
         assert_eq!(&*slices[0], b"llo");
     }
 
-    proptest! {
-        #[test]
-        fn random(bufs: Vec<Vec<u8>>, splits in proptest::collection::vec(0..10usize, 1..10)) {
-            let concat: Vec<u8> = bufs.iter().flat_map(|b| b.iter()).copied().collect();
-            let mut segmented = bufs.iter()
-                .map(|b| &b[..])
-                .collect::<SegmentedBuf<_>>();
-            assert_eq!(concat.len(), segmented.remaining());
-            assert!(segmented.segments() <= bufs.len());
-            assert!(concat.starts_with(segmented.chunk()));
-            let mut bytes = segmented.clone().copy_to_bytes(segmented.remaining());
-            assert_eq!(&concat[..], &bytes[..]);
-            let mut sliced = bufs.iter().map(Deref::deref).collect::<Vec<&[u8]>>();
-            let mut sliced = SegmentedSlice::new(&mut sliced);
+    #[cfg(not(miri))]
+    mod proptests {
 
-            let mut fifo = SegmentedBuf::new();
-            let mut buf_pos = bufs.iter();
+        use super::*;
+        use proptest::prelude::*;
+        use std::ops::Deref;
 
-            for split in splits {
-                if !bytes.has_remaining() {
-                    break;
+        proptest! {
+            #[test]
+            fn random(bufs: Vec<Vec<u8>>, splits in proptest::collection::vec(0..10usize, 1..10)) {
+                let concat: Vec<u8> = bufs.iter().flat_map(|b| b.iter()).copied().collect();
+                let mut segmented = bufs.iter()
+                    .map(|b| &b[..])
+                    .collect::<SegmentedBuf<_>>();
+                assert_eq!(concat.len(), segmented.remaining());
+                assert!(segmented.segments() <= bufs.len());
+                assert!(concat.starts_with(segmented.chunk()));
+                let mut bytes = segmented.clone().copy_to_bytes(segmented.remaining());
+                assert_eq!(&concat[..], &bytes[..]);
+                let mut sliced = bufs.iter().map(Deref::deref).collect::<Vec<&[u8]>>();
+                let mut sliced = SegmentedSlice::new(&mut sliced);
+
+                let mut fifo = SegmentedBuf::new();
+                let mut buf_pos = bufs.iter();
+
+                for split in splits {
+                    if !bytes.has_remaining() {
+                        break;
+                    }
+                    let split = cmp::min(bytes.remaining(), split);
+                    while fifo.remaining() < split {
+                        fifo.push(&buf_pos.next().unwrap()[..]);
+                    }
+                    let c1 = bytes.copy_to_bytes(split);
+                    let c2 = segmented.copy_to_bytes(split);
+                    let c3 = sliced.copy_to_bytes(split);
+                    assert_eq!(c1, c2);
+                    assert_eq!(c1, c3);
+                    assert_eq!(bytes.remaining(), segmented.remaining());
+                    assert_eq!(bytes.remaining(), sliced.remaining());
                 }
-                let split = cmp::min(bytes.remaining(), split);
-                while fifo.remaining() < split {
-                    fifo.push(&buf_pos.next().unwrap()[..]);
-                }
-                let c1 = bytes.copy_to_bytes(split);
-                let c2 = segmented.copy_to_bytes(split);
-                let c3 = sliced.copy_to_bytes(split);
-                assert_eq!(c1, c2);
-                assert_eq!(c1, c3);
-                assert_eq!(bytes.remaining(), segmented.remaining());
-                assert_eq!(bytes.remaining(), sliced.remaining());
             }
         }
     }
