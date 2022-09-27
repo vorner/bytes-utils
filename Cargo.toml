@@ -25,5 +25,5 @@ serde = ["dep:serde", "bytes/serde"]
 
 [dev-dependencies]
 itertools = "^0.10"
-proptest = "^0.10"
+proptest = "^1.0"
 serde_test = "1.0.144"
