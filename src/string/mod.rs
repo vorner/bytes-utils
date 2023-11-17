@@ -34,7 +34,6 @@
 //! # Examples
 //!
 //! ```rust
-//! # use std::convert::TryFrom;
 //! # use bytes::Bytes;
 //! # use bytes_utils::{Str, StrMut};
 //! let mut builder = StrMut::new();
@@ -77,7 +76,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use core::borrow::{Borrow, BorrowMut};
 use core::cmp::Ordering;
-use core::convert::{Infallible, TryFrom};
+use core::convert::Infallible;
 use core::fmt::{Debug, Display, Formatter, Result as FmtResult, Write};
 use core::hash::{Hash, Hasher};
 use core::iter::{self, FromIterator};

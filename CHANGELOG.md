@@ -1,3 +1,8 @@
+# 0.1.4
+
+* Deps bumps.
+* Fix no-std build on either by bumping edition.
+
 # 0.1.3
 
 * Serde support for the stringly wrappers.
